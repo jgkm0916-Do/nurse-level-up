@@ -17,7 +17,6 @@ let appState = {
   notes: [],
 };
 
-// ── 저장/로드 ──
 function saveState() {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(appState));
 }
@@ -50,7 +49,6 @@ function showApp() {
 function updateHUD() {
   const xp   = appState.totalXP || 0;
   const info = getLevelInfo(xp);
-
   document.getElementById('hudLvBadge').textContent = `Lv ${info.level}  ${info.title}`;
   document.getElementById('xpBarFill').style.width  = info.pct + '%';
   document.getElementById('xpLabel').textContent    = `${xp} / ${info.nextXP} XP`;
@@ -60,29 +58,36 @@ function updateHUD() {
 
 // ── 퀘스트 맵 ──
 function updateMap() {
-  const cleared = appState.clearedQuests || [];
-  const list    = document.getElementById('chapterList');
+  const cleared    = appState.clearedQuests || [];
+  const list       = document.getElementById('chapterList');
 
-  // 챕터별로 퀘스트 그룹화
+  // 챕터별 퀘스트 그룹화 (데이터 있는 챕터만)
   const chapterMap = {};
   QUESTS.forEach(q => {
     if (!chapterMap[q.chapter]) chapterMap[q.chapter] = [];
     chapterMap[q.chapter].push(q);
   });
 
+  // 실제 데이터가 있는 챕터 ID 목록
+  const activeChapterIds = Object.keys(chapterMap).map(Number).sort((a,b)=>a-b);
+
   let html = '';
 
-  CHAPTERS.forEach(ch => {
-    const quests   = chapterMap[ch.id] || [];
+  activeChapterIds.forEach(chId => {
+    const ch       = CHAPTERS.find(c => c.id === chId);
+    if (!ch) return;
+    const quests   = chapterMap[chId];
     const chDone   = quests.filter(q => cleared.includes(q.id)).length;
     const chTotal  = quests.length;
-    // 챕터 잠금: 첫 챕터는 항상 열림, 이후는 이전 챕터 퀘스트 전부 클리어
-    const prevQuests = chapterMap[ch.id - 1] || [];
-    const chLocked = ch.id > 1 && prevQuests.some(q => !cleared.includes(q.id));
+
+    // 챕터 잠금: 이전 챕터 퀘스트 전부 클리어해야 열림
+    const prevChId     = activeChapterIds[activeChapterIds.indexOf(chId) - 1];
+    const prevQuests   = prevChId ? (chapterMap[prevChId] || []) : [];
+    const chLocked     = prevChId != null && prevQuests.some(q => !cleared.includes(q.id));
 
     html += `<div class="chapter-card${chLocked ? ' locked' : ''}">`;
     html += `<div class="ch-header">
-      <span class="ch-badge${chLocked ? ' locked' : ''}">Ch ${ch.id}</span>
+      <span class="ch-badge${chLocked ? ' locked' : ''}">Ch ${chId}</span>
       <span class="ch-title">${ch.title}</span>
       <span class="ch-progress">${chDone} / ${chTotal}</span>
     </div>`;
@@ -93,26 +98,25 @@ function updateMap() {
       html += `<div class="quest-nodes">`;
       quests.forEach((quest, i) => {
         const isCleared  = cleared.includes(quest.id);
-        const isUnlocked = quest.id === 0 || cleared.includes(quest.id - 1) ||
-                           (i === 0); // 챕터 첫 번째는 챕터 잠금만 확인
+        const isUnlocked = i === 0 || cleared.includes(quests[i-1].id);
         const nodeClass  = isCleared ? 'cleared' : isUnlocked ? 'unlocked' : 'locked';
 
-        // 커넥터
         if (i > 0) {
           const prevCleared = cleared.includes(quests[i-1].id);
           html += `<div class="qn-conn${prevCleared ? ' lit' : ''}"></div>`;
         }
 
+        const icon = isCleared ? '<span class="qn-check">✓</span>'
+                   : quest.difficulty === 1 ? '🌱'
+                   : quest.difficulty === 2 ? '🌿' : '🌳';
+
         html += `<div class="qn ${nodeClass}" id="qnode-${quest.id}" onclick="openQuest(${quest.id})">
-          <div class="qn-circle">
-            ${isCleared ? '<span class="qn-check">✓</span>' : quest.difficulty === 1 ? '🌱' : quest.difficulty === 2 ? '🌿' : '🌳'}
-          </div>
+          <div class="qn-circle">${icon}</div>
           <div class="qn-label">${quest.title}</div>
         </div>`;
       });
       html += `</div>`;
     }
-
     html += `</div>`;
   });
 
@@ -132,7 +136,7 @@ function switchTab(tab, btn) {
 // ── 진행 탭 ──
 function updateProgressTab() {
   const cleared  = (appState.clearedQuests || []).length;
-  const total    = appState.totalAnswers  || 0;
+  const total    = appState.totalAnswers   || 0;
   const correct  = appState.correctAnswers || 0;
   const accuracy = total > 0 ? Math.round((correct / total) * 100) + '%' : '—';
 
@@ -143,12 +147,10 @@ function updateProgressTab() {
 
   const history = appState.history || [];
   const listEl  = document.getElementById('historyList');
-
   if (!history.length) {
     listEl.innerHTML = '<div class="empty-state">아직 완료한 퀘스트가 없어요.<br>첫 퀘스트를 시작해보세요! 🌱</div>';
     return;
   }
-
   listEl.innerHTML = history.map(h => `
     <div class="history-item">
       <div class="history-icon">🎯</div>
@@ -164,12 +166,10 @@ function updateProgressTab() {
 function updateNotesTab() {
   const notes  = appState.notes || [];
   const listEl = document.getElementById('notesList');
-
   if (!notes.length) {
     listEl.innerHTML = '<div class="empty-state">📋<br><br>아직 기록된 노트가 없어요<br>퀘스트를 완료하면 여기 쌓여요</div>';
     return;
   }
-
   listEl.innerHTML = notes.map(n => `
     <div class="note-card">
       <div class="note-title">${n.title}</div>
@@ -180,21 +180,17 @@ function updateNotesTab() {
 // ── 결과 화면 ──
 function showResult() {
   const persona = getPersona(appState.tagCounts || {});
-  const tags    = Object.entries(appState.tagCounts || {})
-                        .sort((a,b) => b[1]-a[1])
-                        .slice(0,6);
+  const tags    = Object.entries(appState.tagCounts || {}).sort((a,b)=>b[1]-a[1]).slice(0,6);
 
   document.getElementById('screen-app').classList.remove('active');
   document.getElementById('screen-result').classList.add('active');
 
-  // 자신감 있는 간호사 캐릭터
-  document.getElementById('resultChar').innerHTML = CHARS.nurseConfident();
+  document.getElementById('resultChar').innerHTML       = CHARS.nurseConfident();
   document.getElementById('resultPersona').textContent  = persona.title;
   document.getElementById('resultTag').textContent      = persona.tags.join(' + ');
   document.getElementById('resultMsg').innerHTML        = persona.msg.replace(/\n/g,'<br>');
   document.getElementById('resultPhilosophy').textContent = persona.philosophy;
 
-  // 성향 pills
   const strong = persona.tags;
   document.getElementById('resultTraits').innerHTML = tags.map(([tag, cnt]) =>
     `<span class="trait-pill ${strong.includes(tag) ? 'strong' : ''}">${tag} ${cnt}회</span>`
@@ -224,29 +220,24 @@ function refreshAll() {
   updateProgressTab();
   updateNotesTab();
 
-  // 모든 퀘스트 클리어 시 결과 보기 버튼 제안
-  const ch1Quests = QUESTS.filter(q => q.chapter === 1);
+  // Ch1 전체 클리어 시 결과 버튼
+  const ch1Quests  = QUESTS.filter(q => q.chapter === 1);
   const allCh1Done = ch1Quests.every(q => (appState.clearedQuests||[]).includes(q.id));
-  if (allCh1Done && !document.getElementById('resultBtn')) {
-    const mapTab = document.getElementById('tab-map');
+  const existBtn   = document.getElementById('resultBtn');
+  if (allCh1Done && !existBtn) {
     const btn = document.createElement('button');
-    btn.id = 'resultBtn';
+    btn.id        = 'resultBtn';
     btn.className = 'btn-primary';
     btn.style.marginTop = '20px';
     btn.textContent = '✨ 나의 간호 성향 결과 보기';
     btn.onclick = showResult;
-    mapTab.appendChild(btn);
+    document.getElementById('tab-map').appendChild(btn);
   }
 }
 
 // ── 초기화 ──
 (function init() {
   loadState();
-
-  // 시작 화면 캐릭터 삽입
   document.getElementById('startChar').innerHTML = CHARS.nurseAnxious();
-
-  if (appState.name) {
-    showApp();
-  }
+  if (appState.name) showApp();
 })();
